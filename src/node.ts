@@ -143,6 +143,8 @@ export class StoatNode extends EventEmitter {
   readonly http: http.Server;
   /** File objects seen in events, so files fetched from peers keep their name and type */
   readonly #fileMeta = new Map<string, FileObject>();
+  readonly #sockets = new Set<import("node:net").Socket>();
+  #stopped = false;
 
   constructor(options: Partial<NodeOptions> = {}) {
     super();
@@ -178,6 +180,10 @@ export class StoatNode extends EventEmitter {
         this.options.log("warn", `request failed: ${error?.stack ?? error}`);
         sendJson(res, 500, { type: "InternalError" });
       });
+    });
+    this.http.on("connection", (socket) => {
+      this.#sockets.add(socket);
+      socket.on("close", () => this.#sockets.delete(socket));
     });
     this.http.on("upgrade", (req, socket, head) => {
       const path = new URL(req.url ?? "/", "http://localhost").pathname;
@@ -217,12 +223,15 @@ export class StoatNode extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    if (this.#stopped) return;
+    this.#stopped = true;
     this.p2p.stop();
     this.bonfire.close();
     this.accounts.flush();
     await new Promise<void>((resolve) => {
       this.http.close(() => resolve());
       this.http.closeAllConnections();
+      for (const socket of this.#sockets) socket.destroy();
     });
   }
 
@@ -359,7 +368,9 @@ export class StoatNode extends EventEmitter {
       nodes: this.p2p.publicAddresses(),
     };
     if (!body.username) body.username = `user${account.id.slice(-4).toLowerCase()}`;
-    return this.publish(account, userScope(account.id), "user.profile", JSON.parse(canonical(body)));
+    const event = this.publish(account, userScope(account.id), "user.profile", JSON.parse(canonical(body)));
+    this.p2p.profilesChanged();
+    return event;
   }
 
   #refreshProfiles(): void {

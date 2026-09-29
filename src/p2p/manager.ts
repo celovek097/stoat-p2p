@@ -66,6 +66,8 @@ export class PeerManager {
   readonly #node: StoatNode;
   readonly #wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
   readonly #peers = new Map<string, Peer>();
+  /** Every open connection, authenticated or not */
+  readonly #sockets = new Set<Peer>();
   readonly #known = new Map<string, KnownPeer>();
   #interest = new Set<string>();
   readonly #explicit = new Set<string>();
@@ -133,9 +135,7 @@ export class PeerManager {
   }
 
   #allPeers(): Peer[] {
-    const peers = new Set<Peer>(this.#peers.values());
-    for (const known of this.#known.values()) if (known.peer) peers.add(known.peer);
-    return [...peers];
+    return [...this.#sockets];
   }
 
   #loadKnown(): string[] {
@@ -214,6 +214,9 @@ export class PeerManager {
 
   #setup(ws: WebSocket, url?: string): Peer {
     const peer = new Peer(ws, url);
+    this.#sockets.add(peer);
+    ws.on("close", () => this.#sockets.delete(peer));
+    if (this.#stopped) ws.terminate();
     ws.on("error", (error) => this.#log("debug", `peer ${url ?? "inbound"}: ${error.message}`));
     ws.on("pong", () => {
       peer.alive = true;
@@ -263,7 +266,7 @@ export class PeerManager {
     });
     setTimeout(() => {
       if (!peer.ready) ws.terminate();
-    }, 15_000);
+    }, 15_000).unref();
     return peer;
   }
 
@@ -372,11 +375,27 @@ export class PeerManager {
     peer.send(auth as unknown as Frame);
   }
 
+  /** A local profile changed: let every direct peer know. */
+  profilesChanged(): void {
+    for (const peer of this.#peers.values()) this.#pushProfiles(peer);
+  }
+
   /** Tell connected peers about local users created or onboarded after the handshake. */
   localUsersChanged(): void {
     this.#grants.clear();
     this.#announceUsers();
     this.#recompute();
+  }
+
+  /** Push the current profiles of our users so peers know them before they meet them in a server. */
+  #pushProfiles(peer: Peer): void {
+    const events: StoatEvent[] = [];
+    for (const account of this.#node.accounts.list()) {
+      const profile = this.#world.profiles.get(account.id);
+      const event = profile && this.#node.store.get(profile.event);
+      if (event) events.push(event);
+    }
+    if (events.length) peer.send({ t: "events", events });
   }
 
   #announceUsers(): void {
@@ -391,6 +410,8 @@ export class PeerManager {
         delegations: [...this.#granted.values()].filter((d) => d.exp > Date.now()),
         grants: hello.relay ? this.#grantsFor(hello.node) : [],
       });
+      // After the proofs, so the peer accepts the profiles.
+      this.#pushProfiles(peer);
     }
   }
 
@@ -446,6 +467,7 @@ export class PeerManager {
     const urls = new Set<string>(this.#node.options.announce);
     for (const other of this.#peers.values()) for (const url of other.hello?.announce ?? []) urls.add(url);
     peer.send({ t: "peers", urls: [...urls].slice(0, 50) });
+    this.#pushProfiles(peer);
     this.#subscribeTo(peer, [...this.#interest]);
     this.announcePresence(peer);
   }
@@ -610,7 +632,12 @@ export class PeerManager {
   }
 
   #onEvents(peer: Peer, events: StoatEvent[]): void {
-    const accepted = events.filter((e) => typeof e?.scope === "string" && this.#interested(e.scope));
+    const accepted = events.filter(
+      (e) =>
+        typeof e?.scope === "string" &&
+        // Profiles pushed by the node hosting that user are always welcome.
+        (this.#interested(e.scope) || (e.scope === `user:${e.author}` && peer.users.has(e.author))),
+    );
     if (!accepted.length) return;
     this.#world.batch(() => {
       for (const event of accepted) {
@@ -665,7 +692,7 @@ export class PeerManager {
     const ttl = Number(frame.ttl) || 0;
     if (this.#node.options.relay && ttl > 0) {
       this.#forwarded.set(rid, peer);
-      setTimeout(() => this.#forwarded.delete(rid), 30_000);
+      setTimeout(() => this.#forwarded.delete(rid), 30_000).unref();
       for (const other of this.#peers.values()) {
         if (other !== peer) other.send({ t: "invite?", rid, code, ttl: ttl - 1 });
       }
@@ -702,6 +729,7 @@ export class PeerManager {
     const request: FileRequest = { hash, chunks: new Map(), resolve, promise };
     this.#files.set(hash, request);
     const timer = setTimeout(() => request.resolve(undefined), timeout);
+    timer.unref();
     void promise.then(() => {
       clearTimeout(timer);
       this.#files.delete(hash);

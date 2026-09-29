@@ -121,7 +121,9 @@ test("offline nodes catch up when they reconnect", async () => {
   assert.equal((await api(two, "POST", `/invites/${invite._id}`, undefined, bob.token)).status, 200);
   await waitFor(() => one.world.server(server.id)?.snap.members[bob.id], 5000, "join replicated");
 
-  // Take node two offline, keep chatting on node one.
+  // Take node two offline, keep chatting on node one. (Disconnect the SDK
+  // first: stoat.js leaks its heartbeat timer when the server goes away.)
+  bob.client.events.disconnect();
   await two.stop();
   for (let i = 0; i < 5; i++) await channel.sendMessage({ content: `while you were away ${i}` });
   await server.edit({ name: "Catch up (renamed)" });

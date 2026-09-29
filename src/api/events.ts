@@ -87,7 +87,7 @@ export class Bonfire {
           ws.close();
         }
       });
-      setTimeout(() => !authenticated && ws.close(), 10_000);
+      setTimeout(() => !authenticated && ws.close(), 10_000).unref();
     }
   }
 
