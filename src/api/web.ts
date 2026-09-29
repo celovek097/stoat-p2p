@@ -231,7 +231,9 @@ export class WebServer {
 
   // Dashboard -----------------------------------------------------------------------
 
+  /** Requests from this machine only; anything relayed by a reverse proxy counts as remote. */
   #isLocal(req: IncomingMessage): boolean {
+    if (req.headers["x-forwarded-for"] || req.headers["forwarded"] || req.headers["x-real-ip"]) return false;
     const address = req.socket.remoteAddress ?? "";
     return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
   }
