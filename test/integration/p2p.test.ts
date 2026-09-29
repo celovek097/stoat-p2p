@@ -221,3 +221,40 @@ test("an identity moves to another node and keeps its servers", async () => {
   assert.equal(sent.status, 200);
   await waitFor(() => home.world.message(channel.id, sent.body._id), 5000, "message back on the old node");
 });
+
+test("friend requests, custom emoji and search", async () => {
+  const one = await startNode({ name: "f-one" });
+  const two = await startNode({ name: "f-two", peers: [p2pUrl(one)] });
+  await connected(one, two);
+  const ada = await register(one, "ada");
+  const bo = await register(two, "bo");
+  await waitFor(() => one.world.profiles.get(bo.id), 5000, "profile pushed to peer");
+
+  // Friend request by name#discriminator across nodes.
+  const discriminator = (await api(two, "GET", "/users/@me", undefined, bo.token)).body.discriminator;
+  const request = await api(one, "POST", "/users/friend", { username: `bo#${discriminator}` }, ada.token);
+  assert.equal(request.status, 200, JSON.stringify(request.body));
+  assert.equal(request.body.relationship, "Outgoing");
+  await waitFor(() => two.world.relationship(bo.id, ada.id) === "Incoming", 5000, "incoming request");
+  const accept = await api(two, "PUT", `/users/${ada.id}/friend`, undefined, bo.token);
+  assert.equal(accept.body.relationship, "Friend");
+  await waitFor(() => one.world.relationship(ada.id, bo.id) === "Friend", 5000, "friends on both nodes");
+
+  // Custom emoji: upload, create, serve by its ULID.
+  const server = await ada.client.servers.createServer({ name: "Emoji" });
+  const fileId = await upload(one, ada.token, "emojis", "blob.png", PNG, "image/png");
+  const emoji = await api(one, "PUT", `/custom/emoji/${fileId}`, { name: "blob", parent: { type: "Server", id: server.id } }, ada.token);
+  assert.equal(emoji.status, 200, JSON.stringify(emoji.body));
+  const listed = await api(one, "GET", `/servers/${server.id}/emojis`, undefined, ada.token);
+  assert.equal(listed.body[0].name, "blob");
+  const image = await fetch(`http://127.0.0.1:${one.port}/autumn/emojis/${emoji.body._id}`);
+  assert.equal(image.status, 200);
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), PNG);
+
+  // Local full-text search.
+  const channel = server.channels[0]!;
+  await channel.sendMessage({ content: "the quick brown stoat" });
+  await channel.sendMessage({ content: "something else" });
+  const found = await api(one, "POST", `/channels/${channel.id}/search`, { query: "STOAT" }, ada.token);
+  assert.deepEqual(found.body.map((m: { content: string }) => m.content), ["the quick brown stoat"]);
+});
