@@ -327,6 +327,25 @@ export class PeerManager {
       case "typing":
         this.#onTyping(peer, frame);
         break;
+      case "scopes?": {
+        const users = [...peer.users];
+        const scopes: string[] = [];
+        for (const state of this.#world.servers.values()) {
+          if (state.snap.server && !state.snap.server.deleted && users.some((u) => state.snap.members[u])) scopes.push(state.scope);
+        }
+        for (const dm of this.#world.dms.values()) if (dm.users.some((u) => users.includes(u))) scopes.push(dm.scope);
+        if (scopes.length) peer.send({ t: "scopes!", scopes: scopes.slice(0, 1000) });
+        break;
+      }
+      case "scopes!":
+        for (const scope of Array.isArray(frame.scopes) ? frame.scopes.slice(0, 1000) : []) {
+          const parsed = typeof scope === "string" ? parseScope(scope) : null;
+          if (parsed?.kind === "server" || (parsed?.kind === "dm" && parsed.users.some((u) => this.#node.accounts.get(u)))) {
+            if (parsed.kind === "dm") this.#world.dmState(scope as string);
+            this.subscribe(scope as string);
+          }
+        }
+        break;
       case "users": {
         const before = peer.representedUsers().length;
         peer.verifyAuth(
@@ -335,8 +354,9 @@ export class PeerManager {
           (d) => this.#onGrant(d),
           true,
         );
-        // Re-offer scopes the peer may now read.
+        // Re-offer scopes the peer may now read, and tell it where its users belong.
         if (peer.representedUsers().length !== before) {
+          this.#onFrame(peer, { t: "scopes?" });
           for (const scope of peer.subscriptions) {
             if (this.#node.store.hasScope(scope) && this.#canServe(peer, scope)) {
               peer.send({ t: "summary", scope, buckets: this.#node.store.summary(scope) });
@@ -470,6 +490,9 @@ export class PeerManager {
     this.#pushProfiles(peer);
     this.#subscribeTo(peer, [...this.#interest]);
     this.announcePresence(peer);
+    // Ask which servers and conversations our users are part of (new device,
+    // imported identity or lost data).
+    if (this.#node.accounts.list().some((a) => a.onboarded)) peer.send({ t: "scopes?" });
   }
 
   #keepalive(): void {

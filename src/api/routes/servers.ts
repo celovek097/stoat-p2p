@@ -4,8 +4,8 @@ import { randomBytes } from "node:crypto";
 
 import { objectId, serverIdFrom, serverScope } from "../../core/event.ts";
 import type { StoatNode } from "../../node.ts";
-import { isPermissionValue, Permission } from "../../state/permissions.ts";
-import { memberRank, serverPermissions, type ServerState } from "../../state/server.ts";
+import { isPermissionValue } from "../../state/permissions.ts";
+import { memberRank, type ServerState } from "../../state/server.ts";
 import { ApiError, errors, type Router } from "../http.ts";
 import { asObject, requireServer, requireServerPermission, uploadedFile } from "./common.ts";
 
@@ -271,8 +271,6 @@ export function registerServers(router: Router, node: StoatNode): void {
       if (!state.snap.server!.roles[role]) throw errors.notFound();
       if (typeof permissions !== "object" || permissions === null) throw errors.validation("permissions");
     }
-    const own = serverPermissions(state.snap, ctx.account.id);
-    void own;
     node.publish(ctx.account, state.scope, "server.permissions", { role, permissions }, [], undefined, "CannotGiveMissingPermissions");
     return s.server(node.world.server(state.id)!);
   });
@@ -318,5 +316,4 @@ export function registerServers(router: Router, node: StoatNode): void {
     return { audit_logs: [], users: [], members: [] };
   });
 
-  void Permission;
 }

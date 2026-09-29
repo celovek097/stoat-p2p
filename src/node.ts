@@ -171,6 +171,9 @@ export class StoatNode extends EventEmitter {
 
     this.world.on("change", (change: WorldChange) => {
       this.#trackMentions(change);
+      if (change.type === "profile" && this.accounts.get(change.user)?.imported && this.http.listening) {
+        setImmediate(() => this.#refreshProfiles());
+      }
       if (change.type === "message.create") for (const file of change.message.attachments ?? []) this.#fileMeta.set(file._id, file);
     });
     this.world.on("accepted", (event: StoatEvent) => this.#indexFiles(event.body, 0));
@@ -373,11 +376,14 @@ export class StoatNode extends EventEmitter {
     return event;
   }
 
+  /** Keep our users' profiles pointing at this node (addresses, encryption key). */
   #refreshProfiles(): void {
     const addresses = JSON.stringify(this.p2p.publicAddresses());
     for (const account of this.accounts.list()) {
       if (!account.onboarded) continue;
       const profile = this.world.profiles.get(account.id);
+      // An identity imported from another node gets its profile from the network first.
+      if (!profile && account.imported) continue;
       if (!profile || JSON.stringify(profile.nodes ?? []) !== addresses || profile.x25519 !== account.x25519.pub) {
         this.publishProfile(account, {});
       }

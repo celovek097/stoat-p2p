@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 // Command line entry point: `stoat-p2p [options]`
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
+import { Accounts } from "./api/accounts.ts";
+import { userIdFromKey } from "./core/event.ts";
 import { StoatNode } from "./node.ts";
 
 const HELP = `stoat-p2p — decentralized Stoat chat node
 
 Usage: stoat-p2p [options]
+       stoat-p2p identity export --email <email> [--data <dir>] > identity.json
+       stoat-p2p identity import --email <email> --password <pw> [--data <dir>] < identity.json
 
   --data <dir>         where events, accounts and files are stored (default ~/.stoat-p2p)
   --port <n>           HTTP port for the web client, API and peers (default 14702)
@@ -31,8 +35,11 @@ Environment variables STOAT_P2P_DATA, STOAT_P2P_PORT, STOAT_P2P_PEERS (comma sep
 STOAT_P2P_ANNOUNCE, STOAT_P2P_NAME and STOAT_P2P_RELAY=1 work too.
 `;
 
-const { values } = parseArgs({
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
   options: {
+    email: { type: "string" },
+    password: { type: "string" },
     data: { type: "string" },
     port: { type: "string" },
     host: { type: "string" },
@@ -55,13 +62,52 @@ if (values.help) {
 }
 
 const env = process.env;
+const dataDir = resolve(values.data ?? env.STOAT_P2P_DATA ?? join(homedir(), ".stoat-p2p"));
+
+// Identities are just keys: moving to another node means taking them along.
+if (positionals[0] === "identity") {
+  const accounts = new Accounts(dataDir);
+  if (positionals[1] === "export") {
+    const account = values.email ? accounts.byEmail(values.email) : undefined;
+    if (!account) {
+      console.error("unknown --email");
+      process.exit(1);
+    }
+    process.stdout.write(
+      `${JSON.stringify({ v: 1, user: account.id, created: account.created, keys: account.keys, x25519: account.x25519 }, null, 2)}\n`,
+    );
+    process.exit(0);
+  }
+  if (positionals[1] === "import") {
+    const data = JSON.parse(readFileSync(0, "utf8"));
+    if (!values.email || !values.password || values.password.length < 8) {
+      console.error("--email and --password (8+ characters) are required");
+      process.exit(1);
+    }
+    if (userIdFromKey(data.keys?.pub, data.created) !== data.user) {
+      console.error("identity file is corrupt: key does not match user id");
+      process.exit(1);
+    }
+    if (accounts.get(data.user) || accounts.byEmail(values.email)) {
+      console.error("this identity or email already exists on this node");
+      process.exit(1);
+    }
+    accounts.import(values.email, values.password, data.keys, data.x25519, data.created);
+    accounts.flush();
+    console.log(`imported ${data.user}; start the node and log in with ${values.email}`);
+    process.exit(0);
+  }
+  process.stdout.write(HELP);
+  process.exit(1);
+}
+
 const list = (value: string | undefined) => (value ? value.split(",").map((v) => v.trim()).filter(Boolean) : []);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const webDir = values.web ?? env.STOAT_P2P_WEB ?? join(root, "web", "dist");
 const verbose = values.verbose || env.STOAT_P2P_VERBOSE === "1";
 
 const node = new StoatNode({
-  dataDir: resolve(values.data ?? env.STOAT_P2P_DATA ?? join(homedir(), ".stoat-p2p")),
+  dataDir,
   port: Number(values.port ?? env.STOAT_P2P_PORT ?? 14702),
   host: values.host ?? env.STOAT_P2P_HOST ?? "0.0.0.0",
   peers: [...(values.peer ?? []), ...list(env.STOAT_P2P_PEERS)],

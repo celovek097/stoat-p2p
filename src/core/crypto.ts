@@ -70,9 +70,8 @@ export interface KeyPair {
 }
 
 export function generateSigningKey(): KeyPair {
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const { privateKey } = generateKeyPairSync("ed25519");
   const jwk = privateKey.export({ format: "jwk" });
-  void publicKey;
   return { pub: jwk.x!, priv: jwk.d! };
 }
 

@@ -1,0 +1,31 @@
+# A small demo network: an always-on relay hub and two personal nodes that
+# only know the hub. Open http://localhost:14701 (Alice's node) and
+# http://localhost:14703 (Bob's node) in two different browsers.
+#
+#   docker compose up --build
+
+services:
+  hub:
+    build: .
+    command: ["node", "src/cli.ts", "--relay", "--name", "hub", "--announce", "ws://hub:14702/p2p", "--no-lan"]
+    volumes: ["hub:/data"]
+    restart: unless-stopped
+
+  alice:
+    build: .
+    command: ["node", "src/cli.ts", "--name", "alice-node", "--peer", "ws://hub:14702/p2p", "--no-lan"]
+    ports: ["14701:14702"]
+    volumes: ["alice:/data"]
+    restart: unless-stopped
+
+  bob:
+    build: .
+    command: ["node", "src/cli.ts", "--name", "bob-node", "--peer", "ws://hub:14702/p2p", "--no-lan"]
+    ports: ["14703:14702"]
+    volumes: ["bob:/data"]
+    restart: unless-stopped
+
+volumes:
+  hub:
+  alice:
+  bob:

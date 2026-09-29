@@ -1,0 +1,7 @@
+node_modules
+web/dist
+web/dist.prebuilt
+web/.build
+test-results
+.scratch
+.git

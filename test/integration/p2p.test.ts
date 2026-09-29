@@ -89,11 +89,6 @@ test("a relay hub connects nodes that cannot reach each other", async () => {
 
   const lena = await register(left, "lena");
   const rick = await register(right, "rick");
-  // Reconnect so the hub receives delegations for the new users.
-  for (const node of [left, right]) {
-    for (const peer of node.p2p.status().peers) void peer;
-  }
-
   const server = await lena.client.servers.createServer({ name: "Behind NAT" });
   const channel = server.channels[0]!;
   const invite = (await channel.createInvite()) as unknown as { _id: string };
@@ -200,4 +195,29 @@ test("direct messages are end-to-end encrypted, files replicate", async () => {
   assert.equal(file.status, 200);
   assert.deepEqual(Buffer.from(await file.arrayBuffer()), PNG);
   assert.equal(file.headers.get("content-type"), "image/png");
+});
+
+test("an identity moves to another node and keeps its servers", async () => {
+  const home = await startNode({ name: "home" });
+  const wanderer = await register(home, "wanderer");
+  const server = await wanderer.client.servers.createServer({ name: "Portable" });
+  const channel = server.channels[0]!;
+  await channel.sendMessage({ content: "written at home" });
+
+  // Export the keys from the old node and import them on a brand new one.
+  const account = home.accounts.get(wanderer.id)!;
+  const fresh = await startNode({ name: "new-home", peers: [p2pUrl(home)] });
+  await connected(home, fresh);
+  fresh.accounts.import("wanderer@new.test", "correct horse battery", account.keys, account.x25519, account.created);
+  fresh.p2p.localUsersChanged();
+
+  await waitFor(() => fresh.world.server(server.id)?.snap.members[wanderer.id], 5000, "server found through peers");
+  await waitFor(() => fresh.world.profiles.get(wanderer.id)?.username === "wanderer", 5000, "profile kept");
+  const login = await api(fresh, "POST", "/auth/session/login", { email: "wanderer@new.test", password: "correct horse battery" });
+  assert.equal(login.body.user_id, wanderer.id, "same user id on the new node");
+  const history = await api(fresh, "GET", `/channels/${channel.id}/messages`, undefined, login.body.token);
+  assert.ok(history.body.some((m: { content?: string }) => m.content === "written at home"));
+  const sent = await api(fresh, "POST", `/channels/${channel.id}/messages`, { content: "now from my new node" }, login.body.token);
+  assert.equal(sent.status, 200);
+  await waitFor(() => home.world.message(channel.id, sent.body._id), 5000, "message back on the old node");
 });

@@ -142,8 +142,7 @@ export class World extends EventEmitter {
       const error = verifyEvent(event);
       if (error) return { status: "rejected", reason: error };
     }
-    const scope = parseScope(event.scope)!;
-    const scopeError = this.#checkScope(event, scope.kind);
+    const scopeError = this.#checkScope(event);
     if (scopeError) return { status: "rejected", reason: scopeError };
 
     const missing = event.deps.filter((dep) => !this.store.has(dep));
@@ -165,8 +164,9 @@ export class World extends EventEmitter {
     return result;
   }
 
-  #checkScope(event: StoatEvent, kind: string): string | null {
-    const scope = parseScope(event.scope)!;
+  #checkScope(event: StoatEvent): string | null {
+    const scope = parseScope(event.scope);
+    if (!scope) return "bad scope";
     switch (scope.kind) {
       case "user":
         if (!USER_TYPES.has(event.type)) return "unexpected type for user scope";
@@ -185,7 +185,6 @@ export class World extends EventEmitter {
         if (event.type === "server.create") return event.deps.length ? "genesis with dependencies" : null;
         return event.deps.length ? null : "missing dependencies";
     }
-    void kind;
     return "unknown scope";
   }
 

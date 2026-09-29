@@ -65,12 +65,11 @@ export function rootConfig(origin: string) {
 
 const mfaTickets = new Map<string, { user: string; expires: number }>();
 
-function requireTicket(node: StoatNode, ctx: RequestContext): void {
+function requireTicket(ctx: RequestContext): void {
   const token = ctx.req.headers["x-mfa-ticket"];
   const ticket = typeof token === "string" ? mfaTickets.get(token) : undefined;
   if (!ticket || ticket.user !== ctx.account.id || ticket.expires < Date.now()) throw new ApiError(401, "InvalidToken");
   mfaTickets.delete(token as string);
-  void node;
 }
 
 export function registerAuth(router: Router, node: StoatNode): void {
@@ -202,7 +201,7 @@ export function registerAuth(router: Router, node: StoatNode): void {
     });
   }
   router.delete("/auth/mfa/totp", (ctx) => {
-    requireTicket(node, ctx);
+    requireTicket(ctx);
     return undefined;
   });
 

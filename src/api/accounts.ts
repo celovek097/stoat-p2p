@@ -25,6 +25,8 @@ export interface Account {
   x25519: KeyPair;
   created: number;
   onboarded: boolean;
+  /** Imported from another node: wait for the existing profile instead of publishing a new one */
+  imported?: boolean;
 }
 
 export interface Session {
@@ -118,6 +120,7 @@ export class Accounts {
       x25519,
       created,
       onboarded: true,
+      imported: true,
     };
     this.#data.accounts.push(account);
     this.#save();

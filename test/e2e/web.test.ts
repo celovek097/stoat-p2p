@@ -6,6 +6,7 @@
 
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 
@@ -17,11 +18,13 @@ const SHOTS = join(ROOT, "test-results");
 
 function findChromium(): string | undefined {
   if (process.env.CHROMIUM_PATH) return process.env.CHROMIUM_PATH;
-  const base = process.env.PLAYWRIGHT_BROWSERS_PATH ?? "/opt/pw-browsers";
-  if (!existsSync(base)) return undefined;
-  for (const dir of readdirSync(base).filter((d) => d.startsWith("chromium-")).sort().reverse()) {
-    const path = join(base, dir, "chrome-linux", "chrome");
-    if (existsSync(path)) return path;
+  const bases = [process.env.PLAYWRIGHT_BROWSERS_PATH, "/opt/pw-browsers", join(homedir(), ".cache", "ms-playwright")];
+  for (const base of bases) {
+    if (!base || !existsSync(base)) continue;
+    for (const dir of readdirSync(base).filter((d) => d.startsWith("chromium-")).sort().reverse()) {
+      const path = join(base, dir, "chrome-linux", "chrome");
+      if (existsSync(path)) return path;
+    }
   }
   return undefined;
 }
