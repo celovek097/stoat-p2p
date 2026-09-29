@@ -1,0 +1,7 @@
+node_modules/
+data/
+.data*/
+web/dist/
+web/.build/
+test-results/
+*.log
